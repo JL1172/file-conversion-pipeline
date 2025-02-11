@@ -202,6 +202,7 @@ async function main() {
   try {
     const last_arg = process.argv.at(-1);
     //  await runScript(last_arg);
+    /*need to pipe from close*/
     await convertToM3U8("compressed_" + last_arg);
   } catch (err) {
     console.error("Uncaught error", err);

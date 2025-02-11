@@ -1,0 +1,17 @@
+{
+  "name": "compression-script",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "compress": "ts-node index.ts",
+    "hls": "ts-node hls.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "ts-node": "^10.9.2"
+  }
+}

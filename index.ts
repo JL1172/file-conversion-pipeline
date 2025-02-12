@@ -16,6 +16,7 @@ import {
   getDownloadURL,
   getStorage,
   uploadBytesResumable,
+  uploadString,
 } from "firebase/storage";
 import { initializeApp } from "firebase/app";
 
@@ -33,22 +34,48 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const storage = getStorage(app, "popshap-kiosks-dev.appspot.com");
 
+const uploadM3u8File = async (
+  refPath: string,
+  file: string,
+  type: string
+): Promise<Record<string, string>> => {
+  return await new Promise((resolve, reject) => {
+    uploadString(ref(storage, refPath), file, "raw", {
+      contentType: "application/vnd.apple.mpegurl",
+    })
+      .then(async (snapshot) => {
+        const downloadURL = await getDownloadURL(snapshot.ref);
+        resolve({ src: downloadURL, type: type });
+      })
+      .catch((err) => reject(err));
+  });
+};
+
 const uploadMedia = async (
   refPath: string,
-  file: Blob
+  file: Blob | string,
+  type: string
 ): Promise<Record<string, string>> => {
   const storageRef = ref(storage, refPath);
   return new Promise(function (resolve, reject) {
-    const uploadTask = uploadBytesResumable(storageRef, file);
+    const uploadTask = uploadBytesResumable(
+      storageRef,
+      typeof file === "string" ? new Blob([file], { type: type }) : file
+    );
     uploadTask.on(
       "state_changed",
-      (snapshot) => {},
+      (snapshot) => {
+        const progress =
+          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          console.clear();
+        console.log(`Upload is ${progress.toFixed(2)}% done`);
+      },
       (error) => {
         reject(error);
       },
       async () => {
         await getDownloadURL(uploadTask.snapshot.ref).then((downloadURL) => {
-          let data = { src: downloadURL, type: file.type };
+          let data = { src: downloadURL, type: type };
           resolve(data);
         });
       }
@@ -56,47 +83,45 @@ const uploadMedia = async (
   });
 };
 
-const setItem = async (refPath: string, data: any) => {
-  const path = `clients/jacob-cache-test/media/fjfjleoOIonflkdl`;
+// const setItem = async (refPath: string, data: any) => {
+//   const path = `clients/jacob-cache-test/media/fjfjleoOIonflkdl`;
 
-  try {
-    await setDoc(doc(db, path), data);
-  } catch (error) {
-    console.log(error);
-  }
-};
+//   try {
+//     await setDoc(doc(db, path), data);
+//   } catch (error) {
+//     console.log(error);
+//   }
+// };
 
-const getItem = (refPath: string, setDoc: (doc: any) => void): Unsubscribe => {
-  const path = `clients/jacob-cache-test/media/fjfjleoOIonflkdl`.replace(
-    "//",
-    "/"
-  );
-  return onSnapshot(doc(db, path), (doc) => {
-    setDoc({
-      id: doc.id,
-      _docId: doc.id,
-      _refPath: doc.ref.path,
-      ...doc.data(),
-    });
-  });
-};
+// const getItem = (refPath: string, setDoc: (doc: any) => void): Unsubscribe => {
+//   const path = `clients/jacob-cache-test/media/fjfjleoOIonflkdl`.replace(
+//     "//",
+//     "/"
+//   );
+//   return onSnapshot(doc(db, path), (doc) => {
+//     setDoc({
+//       id: doc.id,
+//       _docId: doc.id,
+//       _refPath: doc.ref.path,
+//       ...doc.data(),
+//     });
+//   });
+// };
 
-async function storeFile(refPath: string, fileBlob: Blob) {
+async function storeFile(
+  refPath: string,
+  fileBlob: Blob | string,
+  type: string
+) {
   const uniquePath = `${Date.now().toString(36)}${Math.random()
     .toString(36)
     .substring(2, 8)}`;
   const result: Record<string, string | any> = await uploadMedia(
     `${refPath}/${uniquePath}`,
-    fileBlob
+    fileBlob,
+    type
   );
   return { result, refPath: `${refPath}/${uniquePath}` };
-}
-
-async function generateUniquePath(refPath: string) {
-  const uniquePath = `${Date.now().toString(36)}${Math.random()
-    .toString(36)
-    .substring(2, 8)}`;
-  return `${refPath}/${uniquePath}`;
 }
 
 async function findSize(file: string): Promise<fs.Stats> {
@@ -128,7 +153,10 @@ async function findMimeType(file: string): Promise<string> {
   }
 }
 
-async function convertToM3U8(inputBuffer: Buffer, refPath: string): Promise<Record<string, string | Record<string, string>>> {
+async function convertToM3U8(
+  inputBuffer: Buffer,
+  refPath: string
+): Promise<string[]> {
   return await new Promise((resolve, reject) => {
     try {
       console.log("converting to m3u8");
@@ -147,11 +175,11 @@ async function convertToM3U8(inputBuffer: Buffer, refPath: string): Promise<Reco
           "0",
           "-f",
           "hls",
-          "-hls_segment_filename",
-          `segment_%03d.ts`,
+          "-hls_flags",
+          "delete_segments",
           "pipe:1",
         ],
-        { stdio: ["pipe", "pipe", "pipe"] }
+        { stdio: ["pipe", "pipe", "pipe", "pipe"] }
       );
 
       ffmpeg.stdin.write(inputBuffer, (err) => {
@@ -168,7 +196,6 @@ async function convertToM3U8(inputBuffer: Buffer, refPath: string): Promise<Reco
         reject(err);
       });
 
-      let tsChunks: Buffer[] = [];
       let m3u8Chunks: Buffer[] = [];
 
       let int = 0;
@@ -180,28 +207,24 @@ async function convertToM3U8(inputBuffer: Buffer, refPath: string): Promise<Reco
         m3u8Chunks.push(chunks);
       });
 
-      ffmpeg.stderr.on("data", (data) => {
-        // m3u8Chunks.push(data);
-      });
-
       ffmpeg.on("close", async (code) => {
         clearInterval(tid);
         console.log("Elapsed time", int >= 60 ? int / 60 + "m" : int + "s");
-        console.log(`Child process exited with code ${code}`);
-        console.log("successfully compressed and converted");
-        const tsFiles = Buffer.concat(tsChunks);
         const m3u8Manifest = Buffer.concat(m3u8Chunks);
-        console.log(tsFiles);
-        console.log(m3u8Manifest);
-        const manifest = await storeFile(
-          refPath,
-          new Blob([m3u8Manifest], { type: "m3u8" })
-        );
+        const base = m3u8Manifest.toString("utf-8").split("#EXTM3U");
+        const binaryData = [...base];
+        binaryData.pop();
+
+        const utfEncoded = base
+          .at(-1)
+          .split("\n")
+          .filter((n) => n);
+        utfEncoded.unshift("#EXTM3U");
+        const parseableFile = utfEncoded.join("\n");
+
         console.log("Successfully compressed and converted");
-        resolve(manifest);
+        resolve([parseableFile, binaryData.join("")]);
       });
-      // ffmpeg.stdin.write(inputBuffer);
-      // ffmpeg.stdin.end();
     } catch (err) {
       console.error("ERROR CONVERTING TO M3U8: ", err);
       reject(new Error("Error on stdio stream for m3u8 conversion: " + err));
@@ -209,9 +232,7 @@ async function convertToM3U8(inputBuffer: Buffer, refPath: string): Promise<Reco
   });
 }
 
-const writestreamMp4Variant = (refPath: string, uniqueFileName: string) => {};
-
-async function runScript(refPath: string, file: string): Promise<Buffer> {
+async function runScript(file: string): Promise<Buffer> {
   return await new Promise(async (resolve, reject) => {
     try {
       const last_arg = file;
@@ -333,13 +354,45 @@ async function runScript(refPath: string, file: string): Promise<Buffer> {
     }
   });
 }
-const map = { manifest: {} };
+
+/*
+
+* LOGICAL FLOW
+ * 1. take input file and run first command which compresses and spits out a buffer
+ * 2. then i convert that buffer to an m3u8 file and keep it as a buffer
+ * 3. then i generate the ts files, and add the refpath and download url to an object in an array,
+ * 4. then i convert the buffer of m3u8 file to utf-8, replace the semgments with the correct download urls
+ * 5. 
+
+*/
+
+const map = { manifest: {}, tsFile: {} };
 async function main(refPath: string, fileName: string) {
   try {
-    const buffer: Buffer = await runScript(refPath, fileName);
-    const res: Record<string, string | Record<string, string>> =
-      await convertToM3U8(buffer, refPath);
-    map.manifest = res;
+    const buffer: Buffer = await runScript(fileName);
+    const [parseableFile, binaryData]: string[] = await convertToM3U8(
+      buffer,
+      refPath
+    );
+    const mediaRef = await storeFile(
+      refPath,
+      new Blob([binaryData], { type: "MP2T" }),
+      "MP2T"
+    );
+    map.tsFile = mediaRef;
+    const tsDownloadURL = mediaRef?.result?.src;
+    const fileToParse = parseableFile.split("\n");
+    const len = fileToParse.length;
+    for (let i: number = 0; i < len; i++) {
+      const currentLineInFile = fileToParse[i];
+      const regex = /pipe:/i;
+      if (regex.test(currentLineInFile)) {
+        fileToParse[i] = tsDownloadURL;
+      }
+    }
+    const fileToInsert = fileToParse.join("\n");
+    const res = await uploadM3u8File(refPath, fileToInsert, 'application/vnd.apple.mpegurl');
+    console.log(res);
   } catch (err) {
     console.error("Uncaught error", err);
     const message = err?.message?.includes("stdio")
@@ -351,6 +404,6 @@ async function main(refPath: string, fileName: string) {
 
 const refPath = "jacob-cache-test/media";
 const fileName = process.argv.at(-1);
-const changedFileName = "compressed_" + fileName;
 
 main(refPath, fileName);
+

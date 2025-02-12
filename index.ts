@@ -67,7 +67,7 @@ const uploadMedia = async (
       (snapshot) => {
         const progress =
           (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          console.clear();
+        console.clear();
         console.log(`Upload is ${progress.toFixed(2)}% done`);
       },
       (error) => {
@@ -355,6 +355,88 @@ async function runScript(file: string): Promise<Buffer> {
   });
 }
 
+async function convertToTs(
+  inputBuffer: Buffer,
+  refPath: string
+): Promise<string[]> {
+  return await new Promise((resolve, reject) => {
+    try {
+      console.log("converting to m3u8");
+      const ffmpeg = spawn(
+        "ffmpeg",
+        [
+          "-i",
+          `pipe:0`,
+          "-codec",
+          "copy",
+          "-start_number",
+          "0",
+          "-hls_time",
+          "10",
+          "-hls_list_size",
+          "0",
+          "-hls_flags",
+          "delete_segments",
+          // "single_file",
+          // "-hls_segment_filename",
+          "-f",
+          "hls",
+          "pipe:1",
+        ],
+        { stdio: ["pipe", "pipe", "pipe", "pipe"] }
+      );
+
+      ffmpeg.stdin.write(inputBuffer, (err) => {
+        if (err) {
+          console.error("Error writing to stdin", err);
+          reject(err);
+        } else {
+          ffmpeg.stdin.end();
+        }
+      });
+
+      ffmpeg.on("error", (err) => {
+        console.error("FFmpeg process error:", err);
+        reject(err);
+      });
+
+      let m3u8Chunks: Buffer[] = [];
+
+      let int = 0;
+      const tid = setInterval(() => {
+        int++;
+      }, 1000);
+
+      ffmpeg.stdout.on("data", (chunks) => {
+        m3u8Chunks.push(chunks);
+      });
+
+      ffmpeg.on("close", async (code) => {
+        clearInterval(tid);
+        console.log("Elapsed time", int >= 60 ? int / 60 + "m" : int + "s");
+        const m3u8Manifest = Buffer.concat(m3u8Chunks);
+        const base = m3u8Manifest.toString("utf-8").split("#EXTM3U");
+        console.log(m3u8Manifest);
+        const binaryData = [...base];
+        binaryData.pop();
+
+        const utfEncoded = base
+          .at(-1)
+          .split("\n")
+          .filter((n) => n);
+        utfEncoded.unshift("#EXTM3U");
+        const parseableFile = utfEncoded.join("\n");
+        console.log(parseableFile);
+        console.log("Successfully compressed and converted");
+        resolve([parseableFile, binaryData.join("")]);
+      });
+    } catch (err) {
+      console.error("ERROR CONVERTING TO M3U8: ", err);
+      reject(new Error("Error on stdio stream for m3u8 conversion: " + err));
+    }
+  });
+}
+
 /*
 
 * LOGICAL FLOW
@@ -370,10 +452,13 @@ const map = { manifest: {}, tsFile: {} };
 async function main(refPath: string, fileName: string) {
   try {
     const buffer: Buffer = await runScript(fileName);
+    // const [parseableFile, binaryData]: string[] = await convertToTs(buffer,refPath);
+
     const [parseableFile, binaryData]: string[] = await convertToM3U8(
       buffer,
       refPath
     );
+
     const mediaRef = await storeFile(
       refPath,
       new Blob([binaryData], { type: "MP2T" }),
@@ -391,7 +476,11 @@ async function main(refPath: string, fileName: string) {
       }
     }
     const fileToInsert = fileToParse.join("\n");
-    const res = await uploadM3u8File(refPath, fileToInsert, 'application/vnd.apple.mpegurl');
+    const res = await uploadM3u8File(
+      refPath,
+      fileToInsert,
+      "application/vnd.apple.mpegurl"
+    );
     console.log(res);
   } catch (err) {
     console.error("Uncaught error", err);
@@ -406,4 +495,3 @@ const refPath = "jacob-cache-test/media";
 const fileName = process.argv.at(-1);
 
 main(refPath, fileName);
-

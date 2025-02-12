@@ -458,12 +458,14 @@ async function main(refPath: string, fileName: string) {
       buffer,
       refPath
     );
-
+    // const binaryData = await fs.promises.readFile('output.ts');
     const mediaRef = await storeFile(
       refPath,
       new Blob([binaryData], { type: "MP2T" }),
       "MP2T"
     );
+    // console.log(mediaRef)
+    // return;
     map.tsFile = mediaRef;
     const tsDownloadURL = mediaRef?.result?.src;
     const fileToParse = parseableFile.split("\n");

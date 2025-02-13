@@ -26,3 +26,15 @@ ffmpeg -i input.mp4 \
   -hls_time 10 \
   -hls_list_size 0 \
   -f hls index.m3u8
+
+
+
+metrics with hls on 5mbps upload and download
+
+with hls:
+2s initial buffer on a compressed 
+after initial buffer, there was no buffer
+
+with mp4, 
+6 second buffering on load, then 25 seconds of continuous play of the video, then after that, it would not stop buffering
+

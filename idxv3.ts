@@ -58,6 +58,7 @@ const uploadMedia = async (
 
 async function executeScript(inputFile: string, _refPath: string) {
   const env = process.env.ENVIRONMENT || "DEV";
+  const startCPU = process.cpuUsage();
   if (inputFile.split(".").at(-1) !== "mp4") {
     throw new Error('Unexpected file type');
   }
@@ -167,6 +168,9 @@ async function executeScript(inputFile: string, _refPath: string) {
       const seconds = int - minutes * 60;
       console.log("elapsed time: ", int + " second(s)");
       console.log("elapsed time: ", minutes + " min " + seconds + " second(s)");
+      const endCpu = process.cpuUsage(startCPU);
+      const totalCPUTime = (endCpu.user + endCpu.system) / 1e6;
+      console.log("High level estimate of cpu usage ->", ((totalCPUTime / int) * 100) + "%");
       console.log("Process closed with no error: ", data);
     });
     } catch (err) {

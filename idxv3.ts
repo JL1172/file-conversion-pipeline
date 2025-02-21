@@ -1,11 +1,29 @@
 import { spawn } from "child_process";
+import "dotenv/config";
+import path from "path";
+import os from "os";
+import chokidar from "chokidar";
+import fs from "fs";
+
 
 function executeScript(inputFile: string) {
+  const env = process.env.ENVIRONMENT || "DEV";
+  const fileOutput = (file: string) =>
+    env === "DEV" ? `tmp/${file}` : path.join(os.tmpdir(), file);
+  const watcher = chokidar.watch(env === 'DEV' ? 'tmp' : os.tmpdir(), {persistent: true})
   try {
     let int = 0;
     const iid = setInterval(() => {
       int++;
     }, 1000);
+    watcher.on("add", async(fileName) => {
+      console.log(`new file added ${fileName}`);
+      fs.unlink(fileName, (err) => {
+        if (err) {
+          console.error('Error during file conversion in unlinking in tmp directory: ' + err);
+        }
+      })
+    })
     const ffmpeg = spawn(
       "ffmpeg",
       [
@@ -38,8 +56,8 @@ function executeScript(inputFile: string) {
         "-b:a",
         "192k",
         "-hls_segment_filename",
-        "tmp/high_%03d.ts",
-        "tmp/high.m3u8",
+        fileOutput("high_%03d.ts"),
+        fileOutput("high.m3u8"),
       ],
       { stdio: ["pipe", "pipe", "pipe"] }
     );
@@ -53,13 +71,14 @@ function executeScript(inputFile: string) {
       clearInterval(iid);
       console.error("Process closed with error: ", err);
     });
-    ffmpeg.on("close", (data) => {
+    ffmpeg.on("close", async(data) => {
       clearInterval(iid);
       const minutes = Math.floor(int / 60);
       const seconds = int - minutes * 60;
       console.log("elapsed time: ", int + " second(s)");
       console.log("elapsed time: ", minutes + " min " + seconds + " second(s)");
       console.log("Process closed with no error: ", data);
+      await watcher.close().then(() => console.log('file watcher closed'));
     });
   } catch (err) {
     console.error(err);

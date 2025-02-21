@@ -56,8 +56,11 @@ const uploadMedia = async (
   });
 };
 
-function executeScript(inputFile: string, _refPath: string) {
+async function executeScript(inputFile: string, _refPath: string) {
   const env = process.env.ENVIRONMENT || "DEV";
+  if (inputFile.split(".").at(-1) !== "mp4") {
+    throw new Error('Unexpected file type');
+  }
   const fileOutput = (file: string) =>
     env === "DEV" ? `tmp/${file}` : path.join(os.tmpdir(), file);
   const watcher = chokidar.watch(env === "DEV" ? "tmp" : os.tmpdir(), {
@@ -76,7 +79,7 @@ function executeScript(inputFile: string, _refPath: string) {
         new Blob([buffer], { type: "MP2T" }),
         "MP2T"
       );
-      map.set(fileName, download_url);
+      map.set(fileName.split("/")?.at(-1), download_url);
       fs.unlink(fileName, (err) => {
         if (err) {
           console.error(
@@ -133,29 +136,45 @@ function executeScript(inputFile: string, _refPath: string) {
       console.error("Process closed with error: ", err);
     });
     ffmpeg.on("close", async (data) => {
+      await watcher.close().then(() => console.log("file watcher closed"));
+      const fileData = [];
+      for (const entry of map.entries()) {
+        fileData.push(entry);
+      }
+      const data_read: string = await new Promise((resolve, reject) => {
+        fs.readFile(fileOutput("high.m3u8"), {encoding: "utf-8"}, (err,data) => {
+          if (err) reject(err);
+          else resolve(data);
+        } )
+      })
+      const dataParse1 = data_read?.split("\n");
+      const len: number = dataParse1?.length;
+      for (let i: number = 0; i < len; i++) {
+        if (/high_/i.test(dataParse1[i])) {
+          const name = dataParse1?.[i]?.trim();
+          dataParse1[i] = map.get(name);
+        }
+      }
+      await new Promise((resolve ,reject) => {
+        const dataToInsertIntoManifest = dataParse1.join("\n");
+        fs.writeFile(fileOutput("high.m3u8"), dataToInsertIntoManifest, {encoding: "utf-8"}, (err) => {
+          if (err) reject(err);
+          else resolve('completed');
+        })
+      })
       clearInterval(iid);
       const minutes = Math.floor(int / 60);
       const seconds = int - minutes * 60;
       console.log("elapsed time: ", int + " second(s)");
       console.log("elapsed time: ", minutes + " min " + seconds + " second(s)");
       console.log("Process closed with no error: ", data);
-      await watcher.close().then(() => console.log("file watcher closed"));
-      const fileData = [];
-      for (const entry of map.entries()) {
-        fileData.push(entry);
-      }
-      await new Promise((resolve, reject) => {
-        fs.writeFile("downloadurl.txt", fileData.join(","), (err) => {
-          if (err) reject(err);
-          else resolve;
-        });
-      });
-      console.log(map);
     });
-  } catch (err) {
-    console.error(err);
+    } catch (err) {
+      console.error(err);
     return err;
   }
 }
 const refPath = "jacob-cache-test/media";
 executeScript(process.argv.at(-1), refPath);
+
+
